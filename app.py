@@ -5,6 +5,7 @@ from outils.pdf_parser import extract_pdf_text
 from outils.Extraction import extract_skills
 from outils.Matching import calculate_matching_score
 
+
 # --------------------------------
 # CONFIGURATION
 # --------------------------------
@@ -15,6 +16,7 @@ st.set_page_config(
     layout="wide"
 )
 
+
 # --------------------------------
 # TITRE
 # --------------------------------
@@ -24,6 +26,7 @@ st.title("🤖 Assistant intelligent de recrutement")
 st.write(
     "Analyse automatique des CV et matching avec une offre d'emploi."
 )
+
 
 # --------------------------------
 # OFFRE
@@ -46,6 +49,7 @@ job_description = st.text_area(
     )
 )
 
+
 # --------------------------------
 # CV
 # --------------------------------
@@ -58,6 +62,7 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
+
 # --------------------------------
 # BOUTON ANALYSE
 # --------------------------------
@@ -68,20 +73,15 @@ if st.button(
 ):
 
     if not job_description:
-
         st.error(
             "Veuillez saisir la description de l'offre."
         )
-
         st.stop()
 
-
     if not uploaded_files:
-
         st.error(
             "Veuillez importer au moins un CV."
         )
-
         st.stop()
 
 
@@ -90,7 +90,6 @@ if st.button(
     # --------------------------------
 
     candidates = []
-
     cv_texts = []
 
     for file in uploaded_files:
@@ -100,23 +99,19 @@ if st.button(
         skills = extract_skills(text)
 
         candidates.append({
-
             "Candidat": file.name,
-
             "Compétences": ", ".join(skills),
-
             "Texte": text
-
         })
 
         cv_texts.append(text)
 
 
     # --------------------------------
-    # MATCHING
+    # MATCHING TF-IDF + SBERT
     # --------------------------------
 
-    scores = calculate_matching_score(
+    tfidf_scores, sbert_scores, final_scores = calculate_matching_score(
         job_description,
         cv_texts
     )
@@ -126,13 +121,25 @@ if st.button(
     # AJOUT DES SCORES
     # --------------------------------
 
-    for candidate, score in zip(
+    for candidate, tfidf, sbert, final in zip(
         candidates,
-        scores
+        tfidf_scores,
+        sbert_scores,
+        final_scores
     ):
 
+        candidate["TF-IDF"] = round(
+            float(tfidf),
+            2
+        )
+
+        candidate["SBERT"] = round(
+            float(sbert),
+            2
+        )
+
         candidate["Score"] = round(
-            float(score),
+            float(final),
             2
         )
 
@@ -156,48 +163,70 @@ if st.button(
         "Analyse terminée avec succès."
     )
 
-
     st.header("3️⃣ Classement des candidats")
 
-
     results = pd.DataFrame(candidates)
-
 
     display_results = results[
         [
             "Candidat",
             "Compétences",
+            "TF-IDF",
+            "SBERT",
             "Score"
         ]
     ]
-
 
     st.dataframe(
         display_results,
         use_container_width=True,
         hide_index=True
     )
+
+
     # --------------------------------
     # MEILLEUR CANDIDAT
     # --------------------------------
 
     best = candidates[0]
+
     st.header("🏆 Meilleur candidat")
-    col1, col2 = st.columns(2)
+
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-
         st.metric(
             "Candidat",
             best["Candidat"]
         )
 
     with col2:
-
         st.metric(
-            "Score",
+            "TF-IDF",
+            f'{best["TF-IDF"]} %'
+        )
+
+    with col3:
+        st.metric(
+            "SBERT",
+            f'{best["SBERT"]} %'
+        )
+
+    with col4:
+        st.metric(
+            "Score final",
             f'{best["Score"]} %'
         )
+
+
+    # --------------------------------
+    # BARRE DE PROGRESSION
+    # --------------------------------
+
+    st.progress(
+        min(best["Score"] / 100, 1.0)
+    )
+
 
     # --------------------------------
     # COMPETENCES
@@ -219,14 +248,20 @@ if st.button(
             "Aucune compétence détectée."
         )
 
+
     # --------------------------------
     # GRAPHIQUE
     # --------------------------------
 
     st.header("📊 Scores des candidats")
-    chart = results[
-        ["Candidat", "Score"]
-    ].set_index("Candidat")
 
+    chart = results[
+        [
+            "Candidat",
+            "TF-IDF",
+            "SBERT",
+            "Score"
+        ]
+    ].set_index("Candidat")
 
     st.bar_chart(chart)

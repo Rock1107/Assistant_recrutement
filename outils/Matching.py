@@ -1,13 +1,17 @@
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
-
+from functools import lru_cache
 
 # --------------------------------
 # CHARGEMENT DU MODELE SBERT
 # --------------------------------
+@lru_cache(maxsize=1)
+def load_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
+
+model = load_model()
 
 
 # --------------------------------
