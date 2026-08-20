@@ -1,10 +1,8 @@
 import streamlit as st
 import pandas as pd
-
 from outils.pdf_parser import extract_pdf_text
 from outils.Extraction import extract_skills
 from outils.Matching import calculate_matching_score
-
 
 # --------------------------------
 # CONFIGURATION
@@ -16,7 +14,6 @@ st.set_page_config(
     layout="wide"
 )
 
-
 # --------------------------------
 # TITRE
 # --------------------------------
@@ -26,7 +23,6 @@ st.title("🤖 Assistant intelligent de recrutement")
 st.write(
     "Analyse automatique des CV et matching avec une offre d'emploi."
 )
-
 
 # --------------------------------
 # OFFRE
@@ -49,7 +45,6 @@ job_description = st.text_area(
     )
 )
 
-
 # --------------------------------
 # CV
 # --------------------------------
@@ -61,7 +56,6 @@ uploaded_files = st.file_uploader(
     type=["pdf"],
     accept_multiple_files=True
 )
-
 
 # --------------------------------
 # BOUTON ANALYSE
@@ -84,7 +78,6 @@ if st.button(
         )
         st.stop()
 
-
     # --------------------------------
     # EXTRACTION DES CV
     # --------------------------------
@@ -106,7 +99,6 @@ if st.button(
 
         cv_texts.append(text)
 
-
     # --------------------------------
     # MATCHING TF-IDF + SBERT
     # --------------------------------
@@ -115,7 +107,6 @@ if st.button(
         job_description,
         cv_texts
     )
-
 
     # --------------------------------
     # AJOUT DES SCORES
@@ -143,7 +134,6 @@ if st.button(
             2
         )
 
-
     # --------------------------------
     # CLASSEMENT
     # --------------------------------
@@ -153,7 +143,6 @@ if st.button(
         key=lambda x: x["Score"],
         reverse=True
     )
-
 
     # --------------------------------
     # RESULTATS
@@ -183,17 +172,13 @@ if st.button(
         hide_index=True
     )
 
-
     # --------------------------------
     # MEILLEUR CANDIDAT
     # --------------------------------
 
     best = candidates[0]
-
     st.header("🏆 Meilleur candidat")
-
     col1, col2, col3, col4 = st.columns(4)
-
     with col1:
         st.metric(
             "Candidat",
@@ -218,7 +203,6 @@ if st.button(
             f'{best["Score"]} %'
         )
 
-
     # --------------------------------
     # BARRE DE PROGRESSION
     # --------------------------------
@@ -226,7 +210,6 @@ if st.button(
     st.progress(
         min(best["Score"] / 100, 1.0)
     )
-
 
     # --------------------------------
     # COMPETENCES
@@ -248,13 +231,11 @@ if st.button(
             "Aucune compétence détectée."
         )
 
-
     # --------------------------------
     # GRAPHIQUE
     # --------------------------------
-
+    
     st.header("📊 Scores des candidats")
-
     chart = results[
         [
             "Candidat",
@@ -263,5 +244,4 @@ if st.button(
             "Score"
         ]
     ].set_index("Candidat")
-
     st.bar_chart(chart)
