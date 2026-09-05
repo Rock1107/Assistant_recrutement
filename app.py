@@ -18,7 +18,7 @@ st.set_page_config(
 # TITRE
 # --------------------------------
 
-st.title("🤖 Assistant intelligent de recrutement")
+st.title("🤖 Recrutement AI")
 
 st.write(
     "Analyse automatique des CV et matching avec une offre d'emploi."
