@@ -50,221 +50,149 @@ mode = st.sidebar.radio(
 if mode == "📊 Données synthétiques":
     try:
         offres, candidatures = load_data()
-        st.success(
-            "✅ Données synthétiques chargées avec succès."
-        )
+        st.success("✅ Données synthétiques chargées avec succès.")
+
+        # --- FONCTION D'AIDE POUR RÉCUPÉRER UNE COLONNE SÉCURISÉE ---
+        def get_col(df, options, default=""):
+            for opt in options:
+                if opt in df.columns:
+                    return opt
+            return None
+
+        # Noms de colonnes détectés
+        id_job_col = get_col(offres, ['id_offre', 'id', 'job_id', 'offre_id', 'ID'])
+        poste_col = get_col(offres, ['poste', 'titre', 'job_title', 'intitule'], 'poste')
+        desc_col = get_col(offres, ['description', 'desc', 'job_description'], 'description')
+        comp_job_col = get_col(offres, ['competences', 'compétences', 'skills', 'competence'], 'competences')
+        etudes_col = get_col(offres, ['niveau_etudes', 'niveau_etude', 'etudes', 'diplome'], 'niveau_etudes')
+        exp_job_col = get_col(offres, ['experience_requise', 'experience', 'exp_requise'], 'experience_requise')
+
         # ----------------------------------------
         # STATISTIQUES
         # ----------------------------------------
         col1, col2 = st.columns(2)
         with col1:
-            st.metric(
-                "📋 Nombre d'offres",
-                len(offres)
-            )
+            st.metric("📋 Nombre d'offres", len(offres))
         with col2:
-            st.metric(
-                "👥 Nombre de candidats",
-                len(candidatures)
-            )
+            st.metric("👥 Nombre de candidats", len(candidatures))
+
         # ----------------------------------------
         # SÉLECTION DE L'OFFRE
         # ----------------------------------------
         st.header("1️⃣ Sélection de l'offre d'emploi")
+
+        def format_offre(i):
+            poste_val = offres.iloc[i][poste_col] if poste_col else f"Offre {i+1}"
+            if id_job_col:
+                return f"{offres.iloc[i][id_job_col]} - {poste_val}"
+            return f"{i+1} - {poste_val}"
+
         offre_selectionnee = st.selectbox(
             "Choisissez une offre :",
             range(len(offres)),
-            format_func=lambda i: (
-                f"{offres.iloc[i]['id_offre']} - "
-                f"{offres.iloc[i]['poste']}"
-            )
+            format_func=format_offre
         )
+
         offre = offres.iloc[offre_selectionnee]
-        st.subheader(
-            f"💼 {offre['poste']}"
-        )
-        st.write(
-            f"**Description :** {offre['description']}"
-        )
-        st.write(
-            f"**Compétences requises :** "
-            f"{offre['competences']}"
-        )
-        st.write(
-            f"**Niveau d'études :** "
-            f"{offre['niveau_etudes']}"
-        )
-        st.write(
-            f"**Expérience requise :** "
-            f"{offre['experience_requise']}"
-        )
+
+        st.subheader(f"💼 {offre.get(poste_col, 'Offre sélectionnée')}")
+        st.write(f"**Description :** {offre.get(desc_col, 'N/A')}")
+        st.write(f"**Compétences requises :** {offre.get(comp_job_col, 'N/A')}")
+        st.write(f"**Niveau d'études :** {offre.get(etudes_col, 'N/A')}")
+        st.write(f"**Expérience requise :** {offre.get(exp_job_col, 'N/A')}")
+
         # ----------------------------------------
         # LANCEMENT DU MATCHING
         # ----------------------------------------
-        if st.button(
-            "🚀 Lancer le matching",
-            type="primary"
-        ):
+        if st.button("🚀 Lancer le matching", type="primary"):
             job_description = (
-                f"{offre['poste']}. "
-                f"{offre['description']}. "
-                f"Compétences requises : "
-                f"{offre['competences']}. "
-                f"Niveau d'études : "
-                f"{offre['niveau_etudes']}. "
-                f"Expérience : "
-                f"{offre['experience_requise']}."
+                f"{offre.get(poste_col, '')}. "
+                f"{offre.get(desc_col, '')}. "
+                f"Compétences requises : {offre.get(comp_job_col, '')}. "
+                f"Niveau d'études : {offre.get(etudes_col, '')}. "
+                f"Expérience : {offre.get(exp_job_col, '')}."
             )
-            cv_texts = (
-                candidatures["cv_text"]
-                .fillna("")
-                .tolist()
-            )
+
+            # Sécurité pour la colonne cv_text
+            cv_col = get_col(candidatures, ['cv_text', 'cv', 'texte_cv', 'text'], 'cv_text')
+            cv_texts = candidatures[cv_col].fillna("").tolist() if cv_col else []
+
             # ------------------------------------
             # MATCHING TF-IDF + SBERT
             # ------------------------------------
-            (
-                tfidf_scores,
-                sbert_scores,
-                final_scores
-            ) = calculate_matching_score(
+            tfidf_scores, sbert_scores, final_scores = calculate_matching_score(
                 job_description,
                 cv_texts
             )
+
             # ------------------------------------
             # CONSTRUCTION DES RÉSULTATS
             # ------------------------------------
             results = candidatures.copy()
-            results["TF-IDF"] = [
-                round(float(score), 2)
-                for score in tfidf_scores
-            ]
-            results["SBERT"] = [
-                round(float(score), 2)
-                for score in sbert_scores
-            ]
-            results["Score"] = [
-                round(float(score), 2)
-                for score in final_scores
-            ]
-            # ------------------------------------
-            # CLASSEMENT
-            # ------------------------------------
-            results = (
-                results
-                .sort_values(
-                    by="Score",
-                    ascending=False
-                )
-                .reset_index(drop=True)
-            )
-            # ------------------------------------
-            # RÉSULTATS
-            # ------------------------------------
-            st.success(
-                "✅ Analyse terminée avec succès."
-            )
-            st.header(
-                "3️⃣ Classement des candidats"
-            )
-            display_results = results[
-                [
-                    "candidate_id",
-                    "nom",
-                    "poste_cible",
-                    "competences",
-                    "TF-IDF",
-                    "SBERT",
-                    "Score"
-                ]
-            ].copy()
-            display_results.columns = [
-                "ID",
-                "Candidat",
-                "Poste cible",
-                "Compétences",
-                "TF-IDF",
-                "SBERT",
-                "Score final"
-            ]
+            results["TF-IDF"] = [round(float(score), 2) for score in tfidf_scores]
+            results["SBERT"] = [round(float(score), 2) for score in sbert_scores]
+            results["Score"] = [round(float(score), 2) for score in final_scores]
+
+            results = results.sort_values(by="Score", ascending=False).reset_index(drop=True)
+
+            st.success("✅ Analyse terminée avec succès.")
+            st.header("3️⃣ Classement des candidats")
+
+            # Noms des colonnes candidats
+            cand_id_col = get_col(results, ['candidate_id', 'id', 'ID', 'candidat_id'], 'candidate_id')
+            nom_col = get_col(results, ['nom', 'candidat', 'name', 'nom_candidat'], 'nom')
+            target_col = get_col(results, ['poste_cible', 'poste', 'target_job'], 'poste_cible')
+            comp_cand_col = get_col(results, ['competences', 'compétences', 'skills', 'competence'], 'competences')
+
+            cols_to_display = [c for c in [cand_id_col, nom_col, target_col, comp_cand_col, "TF-IDF", "SBERT", "Score"] if c in results.columns]
+            
             st.dataframe(
-                display_results,
+                results[cols_to_display],
                 use_container_width=True,
                 hide_index=True
             )
+
             # ------------------------------------
             # MEILLEUR CANDIDAT
             # ------------------------------------
             best = results.iloc[0]
-            st.header(
-                "🏆 Meilleur candidat"
-            )
+            st.header("🏆 Meilleur candidat")
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric(
-                    "Candidat",
-                    best["nom"]
-                )
+                st.metric("Candidat", best.get(nom_col, "N/A"))
             with col2:
-                st.metric(
-                    "TF-IDF",
-                    f"{best['TF-IDF']} %"
-                )
+                st.metric("TF-IDF", f"{best['TF-IDF']} %")
             with col3:
-                st.metric(
-                    "SBERT",
-                    f"{best['SBERT']} %"
-                )
+                st.metric("SBERT", f"{best['SBERT']} %")
             with col4:
-                st.metric(
-                    "Score final",
-                    f"{best['Score']} %"
-                )
-            st.progress(
-                min(float(best["Score"]) / 100, 1.0)
-            )
+                st.metric("Score final", f"{best['Score']} %")
+
+            st.progress(min(float(best["Score"]) / 100, 1.0))
+
             # ------------------------------------
             # PROFIL DU MEILLEUR CANDIDAT
             # ------------------------------------
-            st.subheader(
-                "👤 Profil du meilleur candidat"
-            )
-            st.write(
-                f"**Nom :** {best['nom']}"
-            )
-            st.write(
-                f"**Diplôme :** {best['diplome']}"
-            )
-            st.write(
-                f"**Expérience :** {best['experience']}"
-            )
-            st.write(
-                f"**Certifications :** "
-                f"{best['certifications']}"
-            )
-            st.write(
-                f"**Compétences :** "
-                f"{best['competences']}"
-            )
+            diplome_col = get_col(results, ['diplome', 'diplôme', 'degree', 'formation'], 'diplome')
+            exp_cand_col = get_col(results, ['experience', 'expérience', 'exp'], 'experience')
+            cert_col = get_col(results, ['certifications', 'certification', 'certs'], 'certifications')
+
+            st.subheader("👤 Profil du meilleur candidat")
+            st.write(f"**Nom :** {best.get(nom_col, 'N/A')}")
+            st.write(f"**Diplôme :** {best.get(diplome_col, 'N/A')}")
+            st.write(f"**Expérience :** {best.get(exp_cand_col, 'N/A')}")
+            st.write(f"**Certifications :** {best.get(cert_col, 'N/A')}")
+            st.write(f"**Compétences :** {best.get(comp_cand_col, 'N/A')}")
+
             # ------------------------------------
             # GRAPHIQUE
             # ------------------------------------
-            st.header(
-                "📊 Comparaison des scores"
-            )
-            chart = results[
-                [
-                    "nom",
-                    "TF-IDF",
-                    "SBERT",
-                    "Score"
-                ]
-            ].set_index("nom")
-            st.bar_chart(chart)
+            st.header("📊 Comparaison des scores")
+            if nom_col in results.columns:
+                chart = results[[nom_col, "TF-IDF", "SBERT", "Score"]].set_index(nom_col)
+                st.bar_chart(chart)
+
     except Exception as e:
-        st.error(
-            f"❌ Une erreur est survenue : {e}"
-        )
+        st.error(f"❌ Une erreur est survenue : {e}")
 # ============================================
 # MODE IMPORT PDF
 # ============================================
@@ -318,7 +246,7 @@ else:
             skills = extract_skills(text)
             candidates.append({
                 "Candidat": file.name,
-                "Compétences": ", ".join(skills),
+                "Competences": ", ".join(skills),
                 "Texte": text
             })
             cv_texts.append(text)
@@ -375,7 +303,7 @@ else:
         display_results = results[
             [
                 "Candidat",
-                "Compétences",
+                "Competences",
                 "TF-IDF",
                 "SBERT",
                 "Score"
@@ -429,7 +357,7 @@ else:
             )
         else:
             st.warning(
-                "Aucune compétence détectée."
+                "Aucune competence détectée."
             )
         # ------------------------------------
         # GRAPHIQUE
