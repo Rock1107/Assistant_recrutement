@@ -1,76 +1,148 @@
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
+import os
+import numpy as np
+
 from functools import lru_cache
 
-# --------------------------------
-# CHARGEMENT DU MODELE SBERT
-# --------------------------------
+from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+# ============================================================
+# Chemin du modèle fine-tuné
+# ============================================================
+
+BASE_DIR = os.path.dirname(
+    os.path.dirname(
+        os.path.abspath(__file__)
+    )
+)
+
+MODEL_PATH = os.path.join(
+    BASE_DIR,
+    "modele_recrutement_finetune"
+)
+
+
+# ============================================================
+# Chargement du modèle
+# ============================================================
+
 @lru_cache(maxsize=1)
 def load_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
 
-model = load_model()
+    print("Chargement du modèle fine-tuné...")
 
-# --------------------------------
-# CALCUL DU MATCHING
-# --------------------------------
-def calculate_matching_score(job_text, cv_texts):
-    
-    # TF-IDF
-    documents = [job_text] + cv_texts
+    model = SentenceTransformer(
+        MODEL_PATH
+    )
+
+    print("✅ Modèle fine-tuné chargé.")
+
+    return model
+
+
+# ============================================================
+# Matching TF-IDF + SBERT fine-tuné
+# ============================================================
+
+def calculate_matching_score(
+    job_description,
+    cv_texts
+):
+
+    model = load_model()
+
+    # --------------------------------------------------------
+    # Sécurité
+    # --------------------------------------------------------
+
+    if not cv_texts:
+
+        return [], [], []
+
+    cv_texts = [
+        str(text)
+        if text is not None
+        else ""
+        for text in cv_texts
+    ]
+
+    job_description = str(
+        job_description
+        if job_description is not None
+        else ""
+    )
+
+    # ========================================================
+    # 1. TF-IDF
+    # ========================================================
+
+    documents = [
+        job_description
+    ] + cv_texts
+
     vectorizer = TfidfVectorizer(
         ngram_range=(1, 2)
     )
-    
-    tfidf_matrix = vectorizer.fit_transform(documents)
-    tfidf_scores = cosine_similarity(
-        tfidf_matrix[0:1],
-        tfidf_matrix[1:]
-    )[0]
-    tfidf_scores = [
-        score * 100
-        for score in tfidf_scores
-    ]
 
-    # Sentence-BERT
+    tfidf_matrix = vectorizer.fit_transform(
+        documents
+    )
+
+    job_vector = tfidf_matrix[0]
+
+    cv_vectors = tfidf_matrix[1:]
+
+    tfidf_scores = cosine_similarity(
+        job_vector,
+        cv_vectors
+    )[0]
+
+    # Conversion en pourcentage
+    tfidf_scores = (
+        np.clip(tfidf_scores, 0, 1)
+        * 100
+    )
+
+    # ========================================================
+    # 2. SBERT fine-tuné
+    # ========================================================
+
     embeddings = model.encode(
         documents,
-        convert_to_tensor=True
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=False
     )
 
     job_embedding = embeddings[0]
+
     cv_embeddings = embeddings[1:]
 
-    sbert_scores = cosine_similarity(
-        job_embedding.cpu().numpy().reshape(1, -1),
-        cv_embeddings.cpu().numpy()
-    )[0]
+    sbert_scores = np.dot(
+        cv_embeddings,
+        job_embedding
+    )
 
-    sbert_scores = [
-        score * 100
-        for score in sbert_scores
-    ]
+    # Les scores cosinus peuvent théoriquement être négatifs
+    sbert_scores = np.clip(
+        sbert_scores,
+        0,
+        1
+    ) * 100
 
-    # Combinaison TF-IDF + SBERT
-    final_scores = []
+    # ========================================================
+    # 3. Score final
+    # ========================================================
 
-    for tfidf, sbert in zip(
-        tfidf_scores,
-        sbert_scores
-    ):
-
-        final_score = (
-            0.4 * tfidf +
-            0.6 * sbert
-        )
-
-        final_scores.append(
-            round(final_score, 2)
-        )
+    final_scores = (
+        0.30 * tfidf_scores
+        + 0.70 * sbert_scores
+    )
 
     return (
-        tfidf_scores,
-        sbert_scores,
-        final_scores
+        tfidf_scores.tolist(),
+        sbert_scores.tolist(),
+        final_scores.tolist()
     )
