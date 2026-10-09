@@ -1,376 +1,484 @@
+
 import streamlit as st
 import pandas as pd
-from outils.pdf_parser import extract_pdf_text
-from outils.Extraction import extract_skills
-from outils.Matching import calculate_matching_score
-# ============================================
-# CONFIGURATION
-# ============================================
+import numpy as np
+import re
+from pathlib import Path
+
+import plotly.express as px
+import fitz
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer, util
+
+
+# =====================================================
+# 1. CONFIGURATION
+# =====================================================
 st.set_page_config(
-    page_title="Assistant intelligent de recrutement",
-    page_icon="🤖",
+    page_title="Assistant Intelligent de Recrutement",
+    page_icon="🎯",
     layout="wide"
 )
-# ============================================
-# TITRE
-# ============================================
-st.title("🤖 Recrutement AI")
-st.write(
-    "Analyse automatique des CV et mise en correspondance "
-    "avec une offre d'emploi grâce au TF-IDF et à SBERT."
+
+st.title("🎯 Recrutement AI")
+st.markdown(
+    "Analysez les CV et identifiez les profils les plus pertinents "
+    "grâce à **TF-IDF** et **Sentence-BERT**."
 )
-# ============================================
-# CHARGEMENT DES DONNÉES
-# ============================================
-@st.cache_data
-def load_data():
-    offres = pd.read_csv(
-        "offres_emploi_synthetiques.csv",
-        encoding="utf-8-sig"
-    )
-    candidatures = pd.read_csv(
-        "candidatures_synthetiques.csv",
-        encoding="utf-8-sig"
-    )
-    return offres, candidatures
-# ============================================
-# CHOIX DU MODE
-# ============================================
-st.sidebar.header("⚙️ Mode de fonctionnement")
-mode = st.sidebar.radio(
-    "Choisissez le mode :",
-    [
-        "📊 Données synthétiques",
-        "📄 Importer des CV PDF"
-    ]
-)
-# ============================================
-# MODE DONNÉES SYNTHÉTIQUES
-# ============================================
-if mode == "📊 Données synthétiques":
+
+
+# =====================================================
+# 2. CHARGEMENT DU MODELE
+# =====================================================
+@st.cache_resource
+def load_sbert_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+
+# =====================================================
+# 3. EXTRACTION DU TEXTE DES PDF
+# =====================================================
+def extract_pdf_text(pdf_file):
     try:
-        offres, candidatures = load_data()
-        st.success("✅ Données synthétiques chargées avec succès.")
+        text_parts = []
 
-        # --- FONCTION D'AIDE POUR RÉCUPÉRER UNE COLONNE SÉCURISÉE ---
-        def get_col(df, options, default=""):
-            for opt in options:
-                if opt in df.columns:
-                    return opt
-            return None
+        with fitz.open(
+            stream=pdf_file.getvalue(),
+            filetype="pdf"
+        ) as document:
+            for page in document:
+                text_parts.append(page.get_text())
 
-        # Noms de colonnes détectés
-        id_job_col = get_col(offres, ['id_offre', 'id', 'job_id', 'offre_id', 'ID'])
-        poste_col = get_col(offres, ['poste', 'titre', 'job_title', 'intitule'], 'poste')
-        desc_col = get_col(offres, ['description', 'desc', 'job_description'], 'description')
-        comp_job_col = get_col(offres, ['competences', 'compétences', 'skills', 'competence'], 'competences')
-        etudes_col = get_col(offres, ['niveau_etudes', 'niveau_etude', 'etudes', 'diplome'], 'niveau_etudes')
-        exp_job_col = get_col(offres, ['experience_requise', 'experience', 'exp_requise'], 'experience_requise')
+        return "\n".join(text_parts).strip()
 
-        # ----------------------------------------
-        # STATISTIQUES
-        # ----------------------------------------
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("📋 Nombre d'offres", len(offres))
-        with col2:
-            st.metric("👥 Nombre de candidats", len(candidatures))
-
-        # ----------------------------------------
-        # SÉLECTION DE L'OFFRE
-        # ----------------------------------------
-        st.header("1️⃣ Sélection de l'offre d'emploi")
-
-        def format_offre(i):
-            poste_val = offres.iloc[i][poste_col] if poste_col else f"Offre {i+1}"
-            if id_job_col:
-                return f"{offres.iloc[i][id_job_col]} - {poste_val}"
-            return f"{i+1} - {poste_val}"
-
-        offre_selectionnee = st.selectbox(
-            "Choisissez une offre :",
-            range(len(offres)),
-            format_func=format_offre
+    except Exception as error:
+        st.warning(
+            f"Erreur de lecture du fichier "
+            f"{pdf_file.name} : {error}"
         )
+        return ""
 
-        offre = offres.iloc[offre_selectionnee]
 
-        st.subheader(f"💼 {offre.get(poste_col, 'Offre sélectionnée')}")
-        st.write(f"**Description :** {offre.get(desc_col, 'N/A')}")
-        st.write(f"**Compétences requises :** {offre.get(comp_job_col, 'N/A')}")
-        st.write(f"**Niveau d'études :** {offre.get(etudes_col, 'N/A')}")
-        st.write(f"**Expérience requise :** {offre.get(exp_job_col, 'N/A')}")
+def clean_text(text):
+    text = str(text or "")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
-        # ----------------------------------------
-        # LANCEMENT DU MATCHING
-        # ----------------------------------------
-        if st.button("🚀 Lancer le matching", type="primary"):
-            job_description = (
-                f"{offre.get(poste_col, '')}. "
-                f"{offre.get(desc_col, '')}. "
-                f"Compétences requises : {offre.get(comp_job_col, '')}. "
-                f"Niveau d'études : {offre.get(etudes_col, '')}. "
-                f"Expérience : {offre.get(exp_job_col, '')}."
-            )
 
-            # Sécurité pour la colonne cv_text
-            cv_col = get_col(candidatures, ['cv_text', 'cv', 'texte_cv', 'text'], 'cv_text')
-            cv_texts = candidatures[cv_col].fillna("").tolist() if cv_col else []
+def get_candidate_name(filename):
+    return Path(filename).stem.replace("_", " ").replace("-", " ")
 
-            # ------------------------------------
-            # MATCHING TF-IDF + SBERT
-            # ------------------------------------
-            tfidf_scores, sbert_scores, final_scores = calculate_matching_score(
-                job_description,
-                cv_texts
-            )
 
-            # ------------------------------------
-            # CONSTRUCTION DES RÉSULTATS
-            # ------------------------------------
-            results = candidatures.copy()
-            results["TF-IDF"] = [round(float(score), 2) for score in tfidf_scores]
-            results["SBERT"] = [round(float(score), 2) for score in sbert_scores]
-            results["Score"] = [round(float(score), 2) for score in final_scores]
+# =====================================================
+# 4. PARAMETRES DU MATCHING
+# =====================================================
+st.sidebar.header("⚙️ Paramètres du matching")
 
-            results = results.sort_values(by="Score", ascending=False).reset_index(drop=True)
+weight_tfidf = st.sidebar.slider(
+    "Poids TF-IDF",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.5,
+    step=0.1
+)
 
-            st.success("✅ Analyse terminée avec succès.")
-            st.header("3️⃣ Classement des candidats")
+weight_sbert = round(1.0 - weight_tfidf, 1)
 
-            # Noms des colonnes candidats
-            cand_id_col = get_col(results, ['candidate_id', 'id', 'ID', 'candidat_id'], 'candidate_id')
-            nom_col = get_col(results, ['nom', 'candidat', 'name', 'nom_candidat'], 'nom')
-            target_col = get_col(results, ['poste_cible', 'poste', 'target_job'], 'poste_cible')
-            comp_cand_col = get_col(results, ['competences', 'compétences', 'skills', 'competence'], 'competences')
+st.sidebar.caption(
+    f"Poids Sentence-BERT : {weight_sbert:.1f}"
+)
 
-            cols_to_display = [c for c in [cand_id_col, nom_col, target_col, comp_cand_col, "TF-IDF", "SBERT", "Score"] if c in results.columns]
-            
-            st.dataframe(
-                results[cols_to_display],
-                use_container_width=True,
-                hide_index=True
-            )
+st.sidebar.markdown("---")
 
-            # ------------------------------------
-            # MEILLEUR CANDIDAT
-            # ------------------------------------
-            best = results.iloc[0]
-            st.header("🏆 Meilleur candidat")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Candidat", best.get(nom_col, "N/A"))
-            with col2:
-                st.metric("TF-IDF", f"{best['TF-IDF']} %")
-            with col3:
-                st.metric("SBERT", f"{best['SBERT']} %")
-            with col4:
-                st.metric("Score final", f"{best['Score']} %")
+st.sidebar.header("🏆 Shortlist")
 
-            st.progress(min(float(best["Score"]) / 100, 1.0))
+shortlist_size = st.sidebar.selectbox(
+    "Nombre de candidats à retenir",
+    options=[3, 5, 10, 15],
+    index=1
+)
 
-            # ------------------------------------
-            # PROFIL DU MEILLEUR CANDIDAT
-            # ------------------------------------
-            diplome_col = get_col(results, ['diplome', 'diplôme', 'degree', 'formation'], 'diplome')
-            exp_cand_col = get_col(results, ['experience', 'expérience', 'exp'], 'experience')
-            cert_col = get_col(results, ['certifications', 'certification', 'certs'], 'certifications')
 
-            st.subheader("👤 Profil du meilleur candidat")
-            st.write(f"**Nom :** {best.get(nom_col, 'N/A')}")
-            st.write(f"**Diplôme :** {best.get(diplome_col, 'N/A')}")
-            st.write(f"**Expérience :** {best.get(exp_cand_col, 'N/A')}")
-            st.write(f"**Certifications :** {best.get(cert_col, 'N/A')}")
-            st.write(f"**Compétences :** {best.get(comp_cand_col, 'N/A')}")
+# =====================================================
+# 5. CREATION DE L'OFFRE D'EMPLOI
+# =====================================================
+st.subheader("📝 Fiche de poste")
 
-            # ------------------------------------
-            # GRAPHIQUE
-            # ------------------------------------
-            st.header("📊 Comparaison des scores")
-            if nom_col in results.columns:
-                chart = results[[nom_col, "TF-IDF", "SBERT", "Score"]].set_index(nom_col)
-                st.bar_chart(chart)
+nom_offre = st.text_input(
+    "Nom de l'offre d'emploi",
+    placeholder="Ex. : Data Analyst"
+)
 
-    except Exception as e:
-        st.error(f"❌ Une erreur est survenue : {e}")
-# ============================================
-# MODE IMPORT PDF
-# ============================================
+job_description = st.text_area(
+    "Description de l'offre",
+    placeholder=(
+        "Décrivez les missions, les compétences requises, "
+        "les qualifications et l'expérience recherchées..."
+    ),
+    height=180
+)
+
+
+# =====================================================
+# 6. IMPORTATION DES CV
+# =====================================================
+st.subheader("📄 CV des candidats")
+
+uploaded_files = st.file_uploader(
+    "Importez les CV au format PDF",
+    type=["pdf"],
+    accept_multiple_files=True
+)
+
+if uploaded_files:
+    st.info(f"{len(uploaded_files)} fichier(s) importé(s).")
 else:
-    st.header("1️⃣ Offre d'emploi")
-    job_title = st.text_input(
-        "Intitulé du poste",
-        placeholder="Exemple : Data Analyst"
-    )
-    job_description = st.text_area(
-        "Description de l'offre",
-        height=200,
-        placeholder=(
-            "Exemple : Nous recherchons un Data Analyst "
-            "maîtrisant Python, SQL, Power BI et Excel."
-        )
-    )
-    # ----------------------------------------
-    # IMPORT DES CV
-    # ----------------------------------------
-    st.header("2️⃣ CV des candidats")
-    uploaded_files = st.file_uploader(
-        "Importer les CV",
-        type=["pdf"],
-        accept_multiple_files=True
-    )
-    # ----------------------------------------
-    # ANALYSE
-    # ----------------------------------------
-    if st.button(
-        "🚀 Analyser les candidatures",
-        type="primary"
-    ):
-        if not job_description:
-            st.error(
-                "Veuillez saisir la description de l'offre."
-            )
-            st.stop()
-        if not uploaded_files:
-            st.error(
-                "Veuillez importer au moins un CV."
-            )
-            st.stop()
-        # ------------------------------------
+    st.caption("Importez un ou plusieurs CV PDF pour commencer.")
+
+
+# =====================================================
+# 7. LANCEMENT DU MATCHING
+# =====================================================
+if st.button("🚀 Lancer le matching", type="primary"):
+
+    if not nom_offre.strip():
+        st.warning("Veuillez saisir le nom de l'offre d'emploi.")
+
+    elif not job_description.strip():
+        st.warning("Veuillez saisir la description de l'offre.")
+
+    elif not uploaded_files:
+        st.warning("Veuillez importer au moins un CV PDF.")
+
+    else:
+
+        # ---------------------------------------------
         # EXTRACTION DES CV
-        # ------------------------------------
+        # ---------------------------------------------
         candidates = []
-        cv_texts = []
-        for file in uploaded_files:
-            text = extract_pdf_text(file)
-            skills = extract_skills(text)
-            candidates.append({
-                "Candidat": file.name,
-                "Competences": ", ".join(skills),
-                "Texte": text
-            })
-            cv_texts.append(text)
-        # ------------------------------------
-        # MATCHING
-        # ------------------------------------
-        (
-            tfidf_scores,
-            sbert_scores,
-            final_scores
-        ) = calculate_matching_score(
-            job_description,
-            cv_texts
-        )
-        # ------------------------------------
-        # AJOUT DES SCORES
-        # ------------------------------------
-        for candidate, tfidf, sbert, final in zip(
-            candidates,
-            tfidf_scores,
-            sbert_scores,
-            final_scores
+
+        with st.spinner("Extraction du contenu des CV..."):
+
+            for pdf_file in uploaded_files:
+
+                cv_text = clean_text(
+                    extract_pdf_text(pdf_file)
+                )
+
+                if cv_text:
+                    candidates.append({
+                        "Nom": get_candidate_name(pdf_file.name),
+                        "Fichier": pdf_file.name,
+                        "Texte_CV": cv_text
+                    })
+                else:
+                    st.warning(
+                        f"Aucun texte exploitable dans "
+                        f"{pdf_file.name}. "
+                        "Vérifiez le PDF ou utilisez un OCR "
+                        "si le document est scanné."
+                    )
+
+        if not candidates:
+            st.error(
+                "Aucun CV exploitable. "
+                "Veuillez vérifier les fichiers importés."
+            )
+            st.stop()
+
+        df = pd.DataFrame(candidates)
+
+        # ---------------------------------------------
+        # CALCUL DES SCORES
+        # ---------------------------------------------
+        with st.spinner(
+            "Calcul des scores TF-IDF et Sentence-BERT..."
         ):
-            candidate["TF-IDF"] = round(
-                float(tfidf),
+
+            documents = (
+                [job_description.strip()]
+                + df["Texte_CV"].tolist()
+            )
+
+            # TF-IDF
+            try:
+                vectorizer = TfidfVectorizer(
+                    ngram_range=(1, 2),
+                    sublinear_tf=True
+                )
+
+                tfidf_matrix = vectorizer.fit_transform(
+                    documents
+                )
+
+                scores_tfidf = cosine_similarity(
+                    tfidf_matrix[0:1],
+                    tfidf_matrix[1:]
+                ).flatten()
+
+            except ValueError:
+                scores_tfidf = np.zeros(len(df))
+
+            # Sentence-BERT
+            try:
+                model = load_sbert_model()
+
+                job_embedding = model.encode(
+                    job_description.strip(),
+                    convert_to_tensor=True,
+                    normalize_embeddings=True
+                )
+
+                cv_embeddings = model.encode(
+                    df["Texte_CV"].tolist(),
+                    convert_to_tensor=True,
+                    normalize_embeddings=True
+                )
+
+                scores_sbert = util.cos_sim(
+                    job_embedding,
+                    cv_embeddings
+                ).cpu().numpy().flatten()
+
+                # Convention d'affichage : score entre 0 et 100.
+                scores_sbert = np.clip(
+                    scores_sbert, 0, 1
+                )
+
+            except Exception as error:
+                st.error(
+                    f"Erreur Sentence-BERT : {error}"
+                )
+                st.stop()
+
+            # -----------------------------------------
+            # SCORE HYBRIDE
+            # -----------------------------------------
+            df["Score TF-IDF (%)"] = np.round(
+                scores_tfidf * 100, 2
+            )
+
+            df["Score SBERT (%)"] = np.round(
+                scores_sbert * 100, 2
+            )
+
+            df["Score hybride (%)"] = np.round(
+                weight_tfidf * df["Score TF-IDF (%)"]
+                + weight_sbert * df["Score SBERT (%)"],
                 2
             )
-            candidate["SBERT"] = round(
-                float(sbert),
-                2
+
+            # Classement du meilleur au moins bien classé
+            df = df.sort_values(
+                by="Score hybride (%)",
+                ascending=False
+            ).reset_index(drop=True)
+
+            df.insert(
+                0,
+                "Rang",
+                range(1, len(df) + 1)
             )
-            candidate["Score"] = round(
-                float(final),
-                2
-            )
-        # ------------------------------------
-        # CLASSEMENT
-        # ------------------------------------
-        candidates = sorted(
-            candidates,
-            key=lambda x: x["Score"],
-            reverse=True
+
+        # =================================================
+        # 8. RESULTATS GENERAUX
+        # =================================================
+        st.success("Analyse des CV terminée.")
+
+        st.markdown(f"## 📌 Offre analysée : {nom_offre}")
+        st.write(job_description)
+
+        st.markdown("---")
+        st.subheader("📊 Indicateurs du recrutement")
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "CV analysés",
+            len(df)
         )
-        # ------------------------------------
-        # RÉSULTATS
-        # ------------------------------------
-        st.success(
-            "✅ Analyse terminée avec succès."
+
+        col2.metric(
+            "Meilleur score",
+            f"{df.iloc[0]['Score hybride (%)']:.2f} %"
         )
-        st.header(
-            "3️⃣ Classement des candidats"
+
+        col3.metric(
+            "Candidat en tête",
+            df.iloc[0]["Nom"]
         )
-        results = pd.DataFrame(candidates)
-        display_results = results[
-            [
-                "Candidat",
-                "Competences",
-                "TF-IDF",
-                "SBERT",
-                "Score"
-            ]
+
+        # =================================================
+        # 9. TABLEAU DE CLASSEMENT
+        # =================================================
+        st.markdown("---")
+        st.subheader("🏆 Classement des candidats")
+
+        display_columns = [
+            "Rang",
+            "Nom",
+            "Fichier",
+            "Score TF-IDF (%)",
+            "Score SBERT (%)",
+            "Score hybride (%)"
         ]
+
         st.dataframe(
-            display_results,
+            df[display_columns],
             use_container_width=True,
             hide_index=True
         )
-        # ------------------------------------
-        # MEILLEUR CANDIDAT
-        # ------------------------------------
-        best = candidates[0]
-        st.header(
-            "🏆 Meilleur candidat"
+
+        # =================================================
+        # 10. GRAPHIQUE DES SCORES
+        # =================================================
+        st.markdown("---")
+        st.subheader("📈 Graphique des scores de matching")
+
+        st.caption(
+            "Comparaison des scores hybrides des dix premiers candidats."
         )
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric(
-                "Candidat",
-                best["Candidat"]
-            )
-        with col2:
-            st.metric(
-                "TF-IDF",
-                f'{best["TF-IDF"]} %'
-            )
-        with col3:
-            st.metric(
-                "SBERT",
-                f'{best["SBERT"]} %'
-            )
-        with col4:
-            st.metric(
-                "Score final",
-                f'{best["Score"]} %'
-            )
-        st.progress(
-            min(best["Score"] / 100, 1.0)
+
+        graph_df = df.head(10).copy()
+
+        graph_df = graph_df.sort_values(
+            by="Score hybride (%)",
+            ascending=True
         )
-        # ------------------------------------
-        # COMPÉTENCES
-        # ------------------------------------
+
+        fig = px.bar(
+            graph_df,
+            x="Score hybride (%)",
+            y="Nom",
+            orientation="h",
+            text="Score hybride (%)",
+            color="Score hybride (%)",
+            color_continuous_scale="Blues",
+            range_x=[0, 100],
+            labels={
+                "Score hybride (%)": "Score de matching (%)",
+                "Nom": "Candidat"
+            },
+            title=f"Matching des candidats — {nom_offre}"
+        )
+
+        fig.update_traces(
+            texttemplate="%{text:.2f}%",
+            textposition="outside",
+            cliponaxis=False
+        )
+
+        fig.update_layout(
+            xaxis_title="Score hybride (%)",
+            yaxis_title="Candidat",
+            coloraxis_showscale=False,
+            height=max(400, len(graph_df) * 50),
+            margin=dict(l=20, r=60, t=70, b=30)
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+        # =================================================
+        # 11. SHORTLIST DES MEILLEURS CANDIDATS
+        # =================================================
+        st.markdown("---")
+
+        nb_retenus = min(shortlist_size, len(df))
+
         st.subheader(
-            "🧠 Compétences détectées"
+            f"⭐ Shortlist des {nb_retenus} meilleurs candidats"
         )
-        if best["Compétences"]:
-            st.write(
-                best["Compétences"]
+
+        shortlist = df.head(shortlist_size).copy()
+
+        for _, candidate in shortlist.iterrows():
+
+            with st.expander(
+                f"#{int(candidate['Rang'])} — "
+                f"{candidate['Nom']} | "
+                f"{candidate['Score hybride (%)']:.2f} %"
+            ):
+
+                st.write(
+                    f"**Nom du fichier :** {candidate['Fichier']}"
+                )
+
+                c1, c2, c3 = st.columns(3)
+
+                c1.metric(
+                    "TF-IDF",
+                    f"{candidate['Score TF-IDF (%)']:.2f} %"
+                )
+
+                c2.metric(
+                    "Sentence-BERT",
+                    f"{candidate['Score SBERT (%)']:.2f} %"
+                )
+
+                c3.metric(
+                    "Score hybride",
+                    f"{candidate['Score hybride (%)']:.2f} %"
+                )
+
+                st.write("**Extrait du CV :**")
+
+                extrait = candidate["Texte_CV"][:1500]
+
+                st.write(
+                    extrait + (
+                        "..." if len(candidate["Texte_CV"]) > 1500
+                        else ""
+                    )
+                )
+
+        # =================================================
+        # 12. EXPORTATION DES RESULTATS
+        # =================================================
+        st.markdown("---")
+        st.subheader("📥 Télécharger les résultats")
+
+        export_columns = [
+            "Rang",
+            "Nom",
+            "Fichier",
+            "Score TF-IDF (%)",
+            "Score SBERT (%)",
+            "Score hybride (%)"
+        ]
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            csv_all = df[export_columns].to_csv(
+                index=False
+            ).encode("utf-8-sig")
+
+            st.download_button(
+                "📥 Télécharger tous les résultats",
+                data=csv_all,
+                file_name="resultats_matching.csv",
+                mime="text/csv"
             )
-        else:
-            st.warning(
-                "Aucune competence détectée."
+
+        with col2:
+            csv_shortlist = shortlist[
+                export_columns
+            ].to_csv(index=False).encode("utf-8-sig")
+
+            st.download_button(
+                "⭐ Télécharger la shortlist",
+                data=csv_shortlist,
+                file_name="shortlist_candidats.csv",
+                mime="text/csv"
             )
-        # ------------------------------------
-        # GRAPHIQUE
-        # ------------------------------------
-        st.header(
-            "📊 Scores des candidats"
+
+        st.caption(
+            "Les scores représentent une similarité textuelle, "
+            "pas une probabilité d'embauche. Les résultats doivent "
+            "être examinés par un recruteur."
         )
-        chart = results[
-            [
-                "Candidat",
-                "TF-IDF",
-                "SBERT",
-                "Score"
-            ]
-        ].set_index("Candidat")
-        st.bar_chart(chart)
