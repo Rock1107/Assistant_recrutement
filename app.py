@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -175,7 +174,7 @@ if st.button("🚀 Lancer le matching", type="primary"):
                     })
                 else:
                     st.warning(
-                        f"Aucun texte exploitable dans "
+                        f"Aucun CV exploitable dans "
                         f"{pdf_file.name}. "
                         "Vérifiez le PDF ou utilisez un OCR "
                         "si le document est scanné."
@@ -242,7 +241,6 @@ if st.button("🚀 Lancer le matching", type="primary"):
                     cv_embeddings
                 ).cpu().numpy().flatten()
 
-                # Convention d'affichage : score entre 0 et 100.
                 scores_sbert = np.clip(
                     scores_sbert, 0, 1
                 )
@@ -270,7 +268,6 @@ if st.button("🚀 Lancer le matching", type="primary"):
                 2
             )
 
-            # Classement du meilleur au moins bien classé
             df = df.sort_values(
                 by="Score hybride (%)",
                 ascending=False
@@ -295,10 +292,7 @@ if st.button("🚀 Lancer le matching", type="primary"):
 
         col1, col2, col3 = st.columns(3)
 
-        col1.metric(
-            "CV analysés",
-            len(df)
-        )
+        col1.metric("CV analysés", len(df))
 
         col2.metric(
             "Meilleur score",
@@ -384,7 +378,7 @@ if st.button("🚀 Lancer le matching", type="primary"):
         )
 
         # =================================================
-        # 11. SHORTLIST DES MEILLEURS CANDIDATS
+        # 11. SHORTLIST AVEC CV COMPLET
         # =================================================
         st.markdown("---")
 
@@ -394,7 +388,7 @@ if st.button("🚀 Lancer le matching", type="primary"):
             f"⭐ Shortlist des {nb_retenus} meilleurs candidats"
         )
 
-        shortlist = df.head(shortlist_size).copy()
+        shortlist = df.head(nb_retenus).copy()
 
         for _, candidate in shortlist.iterrows():
 
@@ -403,6 +397,10 @@ if st.button("🚀 Lancer le matching", type="primary"):
                 f"{candidate['Nom']} | "
                 f"{candidate['Score hybride (%)']:.2f} %"
             ):
+
+                st.write(
+                    f"**Nom du candidat :** {candidate['Nom']}"
+                )
 
                 st.write(
                     f"**Nom du fichier :** {candidate['Fichier']}"
@@ -425,15 +423,25 @@ if st.button("🚀 Lancer le matching", type="primary"):
                     f"{candidate['Score hybride (%)']:.2f} %"
                 )
 
-                st.write("**Extrait du CV :**")
+                st.markdown("---")
+                st.markdown("### 📄 CV complet du candidat")
 
-                extrait = candidate["Texte_CV"][:1500]
+                cv_complet = candidate["Texte_CV"]
 
-                st.write(
-                    extrait + (
-                        "..." if len(candidate["Texte_CV"]) > 1500
-                        else ""
-                    )
+                st.text_area(
+                    "Contenu intégral du CV",
+                    value=cv_complet,
+                    height=400,
+                    key=f"cv_complet_{int(candidate['Rang'])}",
+                    disabled=True
+                )
+
+                st.download_button(
+                    label="📥 Télécharger le CV en texte",
+                    data=cv_complet,
+                    file_name=f"CV_{candidate['Nom']}.txt",
+                    mime="text/plain",
+                    key=f"download_cv_{int(candidate['Rang'])}"
                 )
 
         # =================================================
